@@ -5,17 +5,24 @@ import pandas as pd
 import math
 import itertools
 import matplotlib.pyplot as plt
-from datetime import datetime, date
+from datetime import datetime
 from geopy.geocoders import Nominatim
 
-# --- НАСТРОЙКИ СТРАНИЦЫ ---
-st.set_page_config(page_title="Астро-Процессор", layout="centered")
+# Настройка страницы
+st.set_page_config(page_title="Astro Processor", layout="centered")
 
-st.title("🌟 Ваш Личный Астро-Процессор")
-st.write("Введите данные для расчета натальной карты. Данные не сохраняются и видны только вам.")
+# --- 1. СПРАВОЧНИКИ ---
+ZODIAC_SIGNS = ["Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева", 
+                "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы"]
+ROMAN_NUMS = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
 
-# --- БАЗЫ ДАННЫХ ---
-dignities = {
+PLANETS_MAP = {
+    "Солнце": swe.SUN, "Луна": swe.MOON, "Меркурий": swe.MERCURY, 
+    "Венера": swe.VENUS, "Марс": swe.MARS, "Юпитер": swe.JUPITER, 
+    "Сатурн": swe.SATURN, "Уран": swe.URANUS, "Нептун": swe.NEPTUNE, "Плутон": swe.PLUTO
+}
+
+DIGNITIES = {
     "Солнце": {"Лев": ("Обитель", 5), "Овен": ("Экзальтация", 4), "Водолей": ("Изгнание", -5), "Весы": ("Падение", -4)},
     "Луна": {"Рак": ("Обитель", 5), "Телец": ("Экзальтация", 4), "Козерог": ("Изгнание", -5), "Скорпион": ("Падение", -4)},
     "Меркурий": {"Близнецы": ("Обитель", 5), "Дева": ("Обитель/Экзальт.", 5), "Стрелец": ("Изгнание", -5), "Рыбы": ("Изгн./Паден.", -5)},
@@ -25,123 +32,141 @@ dignities = {
     "Сатурн": {"Козерог": ("Обитель", 5), "Водолей": ("Обитель", 5), "Весы": ("Экзальтация", 4), "Рак": ("Изгнание", -5), "Лев": ("Изгнание", -5), "Овен": ("Падение", -4)}
 }
 
-zodiac_signs = ["Овен", "Телец", "Близнецы", "Рак", "Лев", "Дева", 
-                "Весы", "Скорпион", "Стрелец", "Козерог", "Водолей", "Рыбы"]
-roman_nums = ["", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"]
-
-planets_map = {
-    "Солнце": swe.SUN, "Луна": swe.MOON, "Меркурий": swe.MERCURY, 
-    "Венера": swe.VENUS, "Марс": swe.MARS, "Юпитер": swe.JUPITER, "Сатурн": swe.SATURN
-}
-
-aspects_rules = {
-    0: {"name": "Соединение", "color": "orange", "orb": 8},
+ASPECTS = {
     60: {"name": "Секстиль", "color": "green", "orb": 6},
     90: {"name": "Квадратура", "color": "red", "orb": 8},
     120: {"name": "Трин", "color": "blue", "orb": 8},
-    180: {"name": "Оппозиция", "color": "red", "orb": 8}
+    180: {"name": "Оппозиция", "color": "red", "orb": 8},
+    0: {"name": "Соединение", "color": "orange", "orb": 8}
 }
 
-# --- БЛОК ВВОДА ДАННЫХ ---
-col1, col2 = st.columns(2)
+# --- 2. ИНТЕРФЕЙС ---
+st.title("✨ Astro-Processor v2.0")
+st.subheader("Натальная карта (Septener + Outer)")
 
-with col1:
-    # Устанавливаем диапазон дат от 1930 до 2100
-    birth_date = st.date_input(
-        "Выберите дату рождения", 
-        value=date(2000, 1, 1),
-        min_value=date(1930, 1, 1),
-        max_value=date(2100, 12, 31)
-    )
-    birth_time = st.time_input("Выберите время рождения", value=datetime.strptime("12:00", "%H:%M").time())
+with st.expander("Ввод данных", expanded=True):
+    col1, col2 = st.columns(2)
+    input_date = col1.text_input("Дата (ДД.ММ.ГГГГ)", placeholder="01.01.2000")
+    input_time = col2.text_input("Время (ЧЧ:ММ)", placeholder="12:00")
+    
+    city = st.text_input("Город (лат. или кир.)", placeholder="Moscow")
+    tz_choice = st.selectbox("Часовой пояс", pytz.all_timezones, index=pytz.all_timezones.index("Europe/Moscow"))
 
-with col2:
-    city = st.text_input("Введите город (на латинице)", placeholder="Например: Moscow")
-    tz_choice = st.selectbox("Часовой пояс", [
-        "Europe/Moscow", "Asia/Baku", "Asia/Tashkent", "Europe/Kiev", 
-        "Europe/London", "UTC", "America/New_York"
-    ])
+if st.button("Рассчитать карту"):
+    try:
+        # Валидация даты и времени
+        dt_str = f"{input_date} {input_time}"
+        naive_dt = datetime.strptime(dt_str, "%d.%m.%Y %H:%M")
+        
+        # Геолокация
+        geolocator = Nominatim(user_agent="my_astro_app")
+        location = geolocator.geocode(city)
+        if not location:
+            st.error("Город не найден. Проверьте написание.")
+            st.stop()
+        
+        lat, lon = location.latitude, location.longitude
+        st.info(f"Координаты: {lat:.2f}, {lon:.2f}")
 
-# --- ЛОГИКА РАСЧЕТА ---
-if st.button("🚀 Рассчитать карту"):
-    if not city:
-        st.warning("Пожалуйста, введите название города.")
-    else:
-        try:
-            with st.spinner('Сверяемся со звездами...'):
-                # Геопозиция
-                geolocator = Nominatim(user_agent="astro_clean_app")
-                location = geolocator.geocode(city)
-                if not location:
-                    st.error("Город не найден. Попробуйте ввести ближайший крупный город на латинице.")
-                    st.stop()
+        # Работа со временем
+        local_tz = pytz.timezone(tz_choice)
+        local_dt = local_tz.localize(naive_dt)
+        utc_dt = local_dt.astimezone(pytz.UTC)
+        
+        # Расчет Юлианского дня
+        jd = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, utc_dt.hour + utc_dt.minute/60.0)
+
+        # Дома (Плацидус)
+        houses_cusps, ascmc = swe.houses(jd, lat, lon, b'P')
+
+        # Планеты
+        planet_data = []
+        planet_positions = {}
+        for name, p_id in PLANETS_MAP.items():
+            res, _ = swe.calc_ut(jd, p_id)
+            lon_deg = res[0]
+            planet_positions[name] = lon_deg
+            
+            sign_idx = int(lon_deg / 30)
+            deg_in_sign = lon_deg % 30
+            sign_name = ZODIAC_SIGNS[sign_idx]
+            
+            status, score = "Перегрин", 0
+            if name in DIGNITIES and sign_name in DIGNITIES[name]:
+                status, score = DIGNITIES[name][sign_name]
                 
-                lat, lon = location.latitude, location.longitude
-                
-                # Время
-                local_tz = pytz.timezone(tz_choice)
-                local_dt = local_tz.localize(datetime.combine(birth_date, birth_time))
-                utc_dt = local_dt.astimezone(pytz.UTC)
-                jd = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, utc_dt.hour + utc_dt.minute/60.0)
-                
-                # Расчет домов и планет
-                houses_cusps, ascmc = swe.houses(jd, lat, lon, b'P')
-                
-                results = []
-                planet_positions = {}
-                for name, p_id in planets_map.items():
-                    res, _ = swe.calc_ut(jd, p_id)
-                    long = res[0]
-                    planet_positions[name] = long
-                    sign_idx = int(long / 30)
-                    deg_in_sign = long % 30
-                    status, power = "Перегрин", 0
-                    if name in dignities and zodiac_signs[sign_idx] in dignities[name]:
-                        status, power = dignities[name][zodiac_signs[sign_idx]]
-                    
-                    results.append({
-                        "Планета": name, "Знак": zodiac_signs[sign_idx], 
-                        "Градус": f"{int(deg_in_sign)}° {int((deg_in_sign % 1) * 60)}'", 
-                        "Статус": status, "Баллы": power
-                    })
+            planet_data.append({
+                "Планета": name, 
+                "Знак": sign_name, 
+                "Градус": f"{int(deg_in_sign)}° {int((deg_in_sign % 1) * 60)}'", 
+                "Статус": status, 
+                "Баллы": score
+            })
 
-                # --- КАРТА ---
-                fig, ax = plt.subplots(figsize=(8, 8))
-                ax.set_aspect('equal')
-                ax.axis('off')
-                
-                # Круг
-                ax.add_patch(plt.Circle((0, 0), 10, color='#1f77b4', fill=False, linewidth=2))
-                for i in range(12):
-                    angle = math.radians(i * 30)
-                    ax.plot([8.5 * math.cos(angle), 10 * math.cos(angle)], [8.5 * math.sin(angle), 10 * math.sin(angle)], color='gray', alpha=0.3)
-                    ax.text(9.2 * math.cos(math.radians(i*30+15)), 9.2 * math.sin(math.radians(i*30+15)), zodiac_signs[i][:3], ha='center', va='center', fontsize=9)
+        # --- 3. ВИЗУАЛИЗАЦИЯ (Matplotlib) ---
+        fig, ax = plt.subplots(figsize=(8, 8), facecolor='white')
+        ax.set_aspect('equal')
+        ax.axis('off')
 
-                # Аспекты
-                for (p1, lon1), (p2, lon2) in itertools.combinations(planet_positions.items(), 2):
-                    diff = abs(lon1 - lon2)
-                    if diff > 180: diff = 360 - diff
-                    for target, props in aspects_rules.items():
-                        if abs(diff - target) <= props["orb"]:
-                            a1, a2 = math.radians(lon1), math.radians(lon2)
-                            ax.plot([7 * math.cos(a1), 7 * math.cos(a2)], [7 * math.sin(a1), 7 * math.sin(a2)], color=props["color"], alpha=0.4, lw=1)
+        # Зодиакальный круг
+        ax.add_patch(plt.Circle((0, 0), 10, color='black', fill=False, linewidth=1.5))
+        ax.add_patch(plt.Circle((0, 0), 7, color='black', fill=False, linewidth=0.8))
 
-                # Планеты на карте
-                for name, lon in planet_positions.items():
-                    ang = math.radians(lon)
-                    ax.plot(7.5 * math.cos(ang), 7.5 * math.sin(ang), 'o', color='#d62728', markersize=8)
-                    ax.text(6.2 * math.cos(ang), 6.2 * math.sin(ang), name, fontsize=8, ha='center', fontweight='bold')
+        # Сектора знаков
+        for i in range(12):
+            angle = math.radians(i * 30)
+            ax.plot([7 * math.cos(angle), 10 * math.cos(angle)], [7 * math.sin(angle), 10 * math.sin(angle)], color='gray', lw=0.5)
+            # Текст знаков
+            txt_angle = math.radians(i * 30 + 15)
+            ax.text(8.5 * math.cos(txt_angle), 8.5 * math.sin(txt_angle), ZODIAC_SIGNS[i][:3], 
+                    ha='center', va='center', fontsize=8, fontweight='bold')
 
-                st.pyplot(fig)
+        # Сетки домов
+        for i in range(12):
+            c_angle = math.radians(houses_cusps[i])
+            ax.plot([4 * math.cos(c_angle), 10 * math.cos(c_angle)], [4 * math.sin(c_angle), 10 * math.sin(c_angle)], 
+                    color='blue', lw=0.7, ls='--')
+            ax.text(3.5 * math.cos(c_angle), 3.5 * math.sin(c_angle), ROMAN_NUMS[i+1], color='blue', fontsize=7)
 
-                # --- ТАБЛИЦЫ ---
-                st.subheader("📊 Результаты анализа")
-                df_planets = pd.DataFrame(results)
-                st.dataframe(df_planets, use_container_width=True)
-                
-                st.subheader("🏠 Дома (Система Плацидуса)")
-                h_list = [{"Дом": roman_nums[i+1], "Знак": zodiac_signs[int(houses_cusps[i]/30)], "Градус": f"{int(houses_cusps[i]%30)}°"} for i in range(12)]
-                st.table(pd.DataFrame(h_list))
+        # Аспекты
+        for (p1, l1), (p2, l2) in itertools.combinations(planet_positions.items(), 2):
+            diff = abs(l1 - l2)
+            if diff > 180: diff = 360 - diff
+            for target, props in ASPECTS.items():
+                if abs(diff - target) <= props["orb"]:
+                    r = 6.5
+                    ax.plot([r * math.cos(math.radians(l1)), r * math.cos(math.radians(l2))],
+                            [r * math.sin(math.radians(l1)), r * math.sin(math.radians(l2))],
+                            color=props["color"], alpha=0.4, lw=1)
 
-        except Exception as e:
-            st.error(f"Произошла техническая ошибка: {e}")
+        # Планеты на карте
+        for name, l in planet_positions.items():
+            rad = math.radians(l)
+            ax.plot(6.8 * math.cos(rad), 6.8 * math.sin(rad), 'o', color='darkred', markersize=6)
+            ax.text(5.5 * math.cos(rad), 5.5 * math.sin(rad), name[:3], fontsize=8, ha='center')
+
+        st.pyplot(fig)
+
+        # --- 4. ТАБЛИЦЫ ---
+        col_tab1, col_tab2 = st.columns(2)
+        
+        with col_tab1:
+            st.write("**🪐 Планеты**")
+            st.dataframe(pd.DataFrame(planet_data), hide_index=True)
+            
+        with col_tab2:
+            st.write("**🏠 Дома (Placidus)**")
+            houses_list = []
+            for i in range(12):
+                c = houses_cusps[i]
+                houses_list.append({
+                    "Дом": ROMAN_NUMS[i+1], 
+                    "Знак": ZODIAC_SIGNS[int(c/30)], 
+                    "Градус": f"{int(c%30)}°"
+                })
+            st.dataframe(pd.DataFrame(houses_list), hide_index=True)
+
+    except ValueError:
+        st.error("Ошибка формата! Введите дату как ДД.ММ.ГГГГ и время как ЧЧ:ММ")
+    except Exception as e:
+        st.error(f"Ошибка: {e}")
