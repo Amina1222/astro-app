@@ -4,4 +4,3 @@ pytz
 pandas
 geopy
 matplotlib
-streamlit-masked-text-input
