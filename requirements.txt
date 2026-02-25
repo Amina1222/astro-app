@@ -1,6 +1,6 @@
+streamlit
 pyswisseph
 pytz
 pandas
 geopy
 matplotlib
-streamlit
