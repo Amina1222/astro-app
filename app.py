@@ -29,11 +29,10 @@ planets = {"Солнце": swe.SUN, "Луна": swe.MOON, "Меркурий": sw
 aspects_rules = {60: {"color": "green", "orb": 6}, 90: {"color": "red", "orb": 8}, 120: {"color": "blue", "orb": 8}, 180: {"color": "red", "orb": 8}}
 
 # --- ИНТЕРФЕЙС ВВОДА ---
-st.info("Введите данные для расчета натальной карты")
+st.info("Введите данные для точного расчета")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    # Расширенный диапазон дат: от 1900 до 2100 года
     b_date = st.date_input(
         "Дата рождения", 
         value=datetime(1990, 1, 1),
@@ -41,41 +40,42 @@ with col1:
         max_value=datetime(2100, 12, 31)
     )
 with col2:
-    b_time = st.time_input("Время рождения", value=datetime.strptime("12:00", "%H:%M").time())
+    # Параметр step=60 позволяет выбирать любую минуту
+    b_time = st.time_input(
+        "Время рождения", 
+        value=datetime.strptime("12:00", "%H:%M").time(), 
+        step=60
+    )
 with col3:
-    city_input = st.text_input("Город рождения (на латинице)", value="", placeholder="Например: Moscow")
+    city_input = st.text_input("Город (на латинице)", value="", placeholder="Например: Moscow")
 
 tz_list = sorted(pytz.all_timezones)
-# Пытаемся по умолчанию поставить Москву, если нет - первый из списка
 try:
     default_tz_index = tz_list.index("Europe/Moscow")
 except:
     default_tz_index = 0
 
-b_tz = st.selectbox("Выберите часовой пояс", tz_list, index=default_tz_index)
+b_tz = st.selectbox("Часовой пояс", tz_list, index=default_tz_index)
 
 if st.button("Рассчитать карту", type="primary"):
     if not city_input:
-        st.warning("Пожалуйста, введите название города.")
+        st.warning("Введите город!")
     else:
         try:
-            # Геолокация
-            geolocator = Nominatim(user_agent="astro_tester_app")
+            geolocator = Nominatim(user_agent="astro_final_app")
             location = geolocator.geocode(city_input)
             if not location:
-                st.error("Город не найден! Попробуйте написать название на английском.")
+                st.error("Город не найден. Попробуйте на английском.")
                 st.stop()
                 
             lat, lon = location.latitude, location.longitude
-            st.success(f"📍 Координаты: {lat:.2f}, {lon:.2f} ({location.address})")
+            st.success(f"📍 {location.address}")
 
-            # Расчет времени UTC
             local_tz = pytz.timezone(b_tz)
             local_dt = local_tz.localize(datetime.combine(b_date, b_time))
             utc_dt = local_dt.astimezone(pytz.UTC)
             jd = swe.julday(utc_dt.year, utc_dt.month, utc_dt.day, utc_dt.hour + utc_dt.minute/60.0)
 
-            # Вычисления
             houses_cusps, ascmc = swe.houses(jd, lat, lon, b'P')
             
             results = []
@@ -95,54 +95,36 @@ if st.button("Рассчитать карту", type="primary"):
                 cusp_deg = houses_cusps[i]
                 sign_idx = int(cusp_deg / 30)
                 deg_in_sign = cusp_deg % 30
-                houses_data.append({"Дом": f"Дом {roman_nums[i+1]}", "Знак": zodiac_signs[sign_idx], "Градус": f"{int(deg_in_sign)}° {int((deg_in_sign % 1) * 60)}'"})
+                houses_data.append({"Дом": f"{roman_nums[i+1]}", "Знак": zodiac_signs[sign_idx], "Градус": f"{int(deg_in_sign)}° {int((deg_in_sign % 1) * 60)}'"})
 
-            # --- ГРАФИКА ---
-            fig, ax = plt.subplots(figsize=(8, 8), facecolor='white')
+            # Рисование
+            fig, ax = plt.subplots(figsize=(8, 8))
             ax.set_aspect('equal')
             ax.axis('off')
-            
-            # Круги зодиака
-            ax.add_patch(plt.Circle((0, 0), 10, color='#2c3e50', fill=False, linewidth=2))
-            ax.add_patch(plt.Circle((0, 0), 7, color='#2c3e50', fill=False, linewidth=1))
+            ax.add_patch(plt.Circle((0, 0), 10, color='black', fill=False))
+            ax.add_patch(plt.Circle((0, 0), 7, color='black', fill=False))
             
             for i in range(12):
                 angle = math.radians(i * 30)
-                ax.plot([7 * math.cos(angle), 10 * math.cos(angle)], [7 * math.sin(angle), 10 * math.sin(angle)], color='#bdc3c7', alpha=0.5)
+                ax.plot([7 * math.cos(angle), 10 * math.cos(angle)], [7 * math.sin(angle), 10 * math.sin(angle)], color='lightgray')
                 a_text = math.radians(i * 30 + 15)
-                ax.text(8.5 * math.cos(a_text), 8.5 * math.sin(a_text), zodiac_signs[i][:3], ha='center', va='center', fontsize=9, fontweight='bold')
+                ax.text(8.5 * math.cos(a_text), 8.5 * math.sin(a_text), zodiac_signs[i][:3], ha='center', va='center')
 
-            # Дома
             for i in range(12):
                 cusp_angle = math.radians(houses_cusps[i])
-                ax.plot([3.5 * math.cos(cusp_angle), 10 * math.cos(cusp_angle)], [3.5 * math.sin(cusp_angle), 10 * math.sin(cusp_angle)], color='black', linewidth=0.8, linestyle='--')
-                l_angle = math.radians(houses_cusps[i] + 4)
-                ax.text(3.8 * math.cos(l_angle), 3.8 * math.sin(l_angle), roman_nums[i+1], fontsize=10, fontweight='bold', color='blue')
+                ax.plot([3.5 * math.cos(cusp_angle), 10 * math.cos(cusp_angle)], [3.5 * math.sin(cusp_angle), 10 * math.sin(cusp_angle)], color='blue', linestyle=':')
 
-            # Аспекты
-            for (p1, lon1), (p2, lon2) in itertools.combinations(planet_positions.items(), 2):
-                diff = abs(lon1 - lon2)
-                if diff > 180: diff = 360 - diff
-                for t_angle, props in aspects_rules.items():
-                    if abs(diff - t_angle) <= props["orb"]:
-                        a1, a2 = math.radians(lon1), math.radians(lon2)
-                        ax.plot([6.5 * math.cos(a1), 6.5 * math.cos(a2)], [6.5 * math.sin(a1), 6.5 * math.sin(a2)], color=props["color"], alpha=0.3, linewidth=1)
-
-            # Планеты
             for name, lon_p in planet_positions.items():
                 angle = math.radians(lon_p)
-                ax.plot(6.8 * math.cos(angle), 6.8 * math.sin(angle), 'o', color='#e74c3c', markersize=7)
-                ax.text(5.8 * math.cos(angle), 5.8 * math.sin(angle), name[:3], ha='center', va='center', fontsize=8, fontweight='bold', bbox=dict(facecolor='white', alpha=0.5, edgecolor='none'))
+                ax.text(6 * math.cos(angle), 6 * math.sin(angle), name[:3], ha='center', fontweight='bold')
 
-            # Интерфейс Streamlit
             c1, c2 = st.columns([1.5, 1])
-            with c1:
-                st.pyplot(fig)
+            with c1: st.pyplot(fig)
             with c2:
-                st.subheader("Положения планет")
-                st.dataframe(pd.DataFrame(results), hide_index=True)
-                st.subheader("Система домов (Плацидус)")
-                st.dataframe(pd.DataFrame(houses_data), hide_index=True)
+                st.write("**Планеты**")
+                st.table(pd.DataFrame(results))
+                st.write("**Дома**")
+                st.table(pd.DataFrame(houses_data))
 
         except Exception as e:
-            st.error(f"Ошибка при расчете: {e}")
+            st.error(f"Ошибка: {e}")
